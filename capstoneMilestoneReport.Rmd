@@ -1,0 +1,383 @@
+---
+title: 'Capstone: Milestone Report'
+author: "Amit Kohli"
+date: "March 18, 2016"
+output: html_document
+---
+
+# Summary
+
+The goal of this report is to download data (https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip) and conduct initial exploratory analysis and demonstrate goals for the eventual application and algorithm. This document explains the major features of the data identified and briefly summarizes plans for creating the prediction algorithm and Shiny app in a way that would be understandable to a non-data scientist manager. The objective for this report are: 
+1. Demonstrate that the data has been successfully downloaded and loaded
+2. Create a basic report of summary statistics about the data sets.
+3. Report any interesting findings
+4. Receive feedback on plans for creating a prediction algorithm and Shiny app.
+
+# Libraries
+
+Libraries used in this study.
+```{r load_libraries}
+library(stringi)
+library(tm)
+library(RWeka)
+library(ggplot2)
+library(dplyr)
+```
+
+# Downloading and loading the data
+
+The data has been downloaded from this link: [https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip), uncompressed, and stored in the "Data" folder within the Working Directory.
+
+There are four languages in this data set. On on each directory.
+```{r data_content}
+list.files("data/final")
+```
+
+The report conducts analysis on the English data, there are 3 files from different sources in data:
+```{r english_content}
+list.files("data/final/en_US")
+```
+
+The source of the files are from:
+
+* News
+* Blogs
+* Twitter
+
+# Exploratory Analisys
+
+Load the three files to obtain some basic information about then.
+```{r basic_analysis,cache=TRUE,warning=FALSE}
+blog.file <- "data/final/en_US/en_US.blogs.txt"
+twitter.file <- "data/final/en_US/en_US.twitter.txt"
+news.file <- "data/final/en_US/en_US.news.txt"
+blogs <- readLines(blog.file, encoding="UTF-8")
+twitter <- readLines(twitter.file, encoding="UTF-8")
+news  <- readLines(news.file, encoding="UTF-8")
+```
+
+**Blog file:**
+* File name: `r blog.file`.
+* File size: `r round(file.info(blog.file)$size/1024/1024,2)` MB.
+* Lines and chars statistics on the file:
+```{r blog_lines, cache=TRUE}
+data.frame(t(stri_stats_general(blogs)))
+```
+* Summary of the char quantities per line:
+```{r blog_summary,cache=TRUE}
+summary(sapply(blogs,FUN=nchar))
+```
+* Words count summary:
+```{r blog_wordcount,cache=TRUE}
+summary(stri_count_words(blogs))
+```
+
+**Twitter file:**
+* File name: `r twitter.file`.
+* File size: `r round(file.info(twitter.file)$size/1024/1024,2)` MB.
+* Lines and chars statistics on the file:
+```{r twitter_ines, cache=TRUE}
+data.frame(t(stri_stats_general(twitter)))
+```
+* Summary of the char quantities per line:
+```{r twitter_summary,cache=TRUE}
+summary(sapply(twitter,FUN=nchar))
+```
+* Words count summary:
+```{r twitter_wordcount,cache=TRUE}
+summary(stri_count_words(twitter))
+```
+
+**News feed:**
+* File name: `r news.file`.
+* File size: `r round(file.info(news.file)$size/1024/1024,2)` MB.
+* Lines and chars statistics on the file:
+```{r news_line, cache=TRUE}
+data.frame(t(stri_stats_general(news)))
+```
+* Summary of the char quantities per line:
+```{r news_summary,cache=TRUE}
+summary(sapply(news,FUN=nchar))
+```
+* Words count summary:
+```{r news_wordcount,cache=TRUE}
+summary(stri_count_words(news))
+```
+
+## Data Cleanning and Preprocessing
+Due to large file size, the report will extract smaller samples to work with.
+```{r sample_size}
+sample.size <- 100000
+sample.blogs <- sample(blogs,sample.size)
+sample.twitter <- sample(twitter,sample.size)
+sample.news <- sample(news,sample.size)
+```
+
+* Sample Blogs has `r round(sample.size/length(blogs)*100.0,2)`% of the original data.
+* Sample Twitter has `r round(sample.size/length(twitter)*100.0,2)`% of the original data.
+* Sample News has `r round(sample.size/length(news)*100.0,2)`% of the original data.
+
+For reproducible research, the report will save the samples and load them as needed.
+
+```{r save_samples}
+save(sample.blogs,sample.twitter,sample.news,file="samples.RData")
+```
+
+```{r load_samples}
+load("samples.RData")
+```
+
+First, convert the encoding of the characters, removing the non-convertible characters.
+```{r data_cleanup, cache=TRUE}
+sample.blogs <- iconv(sample.blogs, "latin1", "ASCII", sub="")
+sample.twitter <- iconv(sample.twitter, "latin1", "ASCII", sub="")
+sample.news <- iconv(sample.news, "latin1", "ASCII", sub="")
+```
+
+Next, clean the data by converting to lower case, removing punctuation, numbers, and profanities. The list of profanity words was obtained from https://github.com/shutterstock/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words/blob/master/en).
+```{r blogs_cleanup, cache=TRUE}
+profanity.words <- readLines("profanity.txt")
+corpus.blogs <- Corpus(VectorSource(list(sample.blogs)))
+corpus.blogs <- tm_map(corpus.blogs, content_transformer(tolower))
+corpus.blogs <- tm_map(corpus.blogs, content_transformer(removePunctuation))
+corpus.blogs <- tm_map(corpus.blogs, content_transformer(removeNumbers))
+corpus.blogs <- tm_map(corpus.blogs, removeWords, stopwords("english"))
+corpus.blogs <- tm_map(corpus.blogs, removeWords, profanity.words)
+corpus.blogs <- tm_map(corpus.blogs, stripWhitespace)
+corpus.blogs <- tm_map(corpus.blogs, stemDocument, language='english')
+```
+
+```{r twitter_cleanup, cache=TRUE}
+corpus.twitter <- Corpus(VectorSource(list(sample.twitter)))
+corpus.twitter <- tm_map(corpus.twitter, content_transformer(tolower))
+corpus.twitter <- tm_map(corpus.twitter, content_transformer(removePunctuation))
+corpus.twitter <- tm_map(corpus.twitter, content_transformer(removeNumbers))
+corpus.twitter <- tm_map(corpus.twitter, removeWords, stopwords("english"))
+corpus.twitter <- tm_map(corpus.twitter, removeWords, profanity.words)
+corpus.twitter <- tm_map(corpus.twitter, stripWhitespace)
+corpus.twitter <- tm_map(corpus.twitter, stemDocument, language='english')
+```
+
+```{r news_cleanup, cache=TRUE}
+corpus.news <- Corpus(VectorSource(list(sample.news)))
+corpus.news <- tm_map(corpus.news, content_transformer(tolower))
+corpus.news <- tm_map(corpus.news, content_transformer(removePunctuation))
+corpus.news <- tm_map(corpus.news, content_transformer(removeNumbers))
+corpus.news <- tm_map(corpus.news, removeWords, stopwords("english"))
+corpus.news <- tm_map(corpus.news, removeWords, profanity.words)
+corpus.news <- tm_map(corpus.news, stripWhitespace)
+corpus.news <- tm_map(corpus.news, stemDocument, language='english')
+```
+
+## Data Analysis
+N-Grams analysis approach is used on the data [N-Grams](http://en.wikipedia.org/wiki/N-gram).  
+
+### Unigram analysis
+The report generates the unigrams and plot the top ten frequency of each sample.
+
+#### Blogs
+
+Top ten words:
+```{r blogs_unigram,cache=TRUE}
+UnigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+unigram.termdocmatrix.blogs <- TermDocumentMatrix(corpus.blogs, control = list(tokenize = UnigramTokenizer))
+unigram.df.blogs <- data.frame(Term = unigram.termdocmatrix.blogs$dimnames$Terms, 
+                                 Freq = unigram.termdocmatrix.blogs$v)
+unigram.df.blogs <- unigram.df.blogs[order(unigram.df.blogs$Freq,decreasing = T),]
+
+ggplot(head(unigram.df.blogs,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="cyan") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Unigrams frequency\nBlogs") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(unigram.df.blogs)` unique words on this sample.
+* `r nrow(unigram.df.blogs %>% filter(Freq == 1))` words occurs only one time.
+
+How many words we need to cover 50% of the instances?
+```{r blogs_fifty,cache=TRUE}
+cumsum.blogs <- cumsum(unigram.df.blogs$Freq)
+limit.50.blogs <- sum(unigram.df.blogs$Freq)*0.5
+length((cumsum.blogs[cumsum.blogs <=  limit.50.blogs]))
+```
+
+How many word to cover 90% of the instances?
+```{r blogs_ninety, cache=TRUE}
+limit.90.blogs <- sum(unigram.df.blogs$Freq)*0.9
+
+length((cumsum.blogs[cumsum.blogs <=  limit.90.blogs]))
+```
+
+#### Twitter
+```{r twitter_unigram,cache=TRUE}
+unigram.termdocmatrix.twitter <- TermDocumentMatrix(corpus.twitter, control = list(tokenize = UnigramTokenizer))
+unigram.df.twitter <- data.frame(Term = unigram.termdocmatrix.twitter$dimnames$Terms, 
+                                 Freq = unigram.termdocmatrix.twitter$v)
+unigram.df.twitter <- unigram.df.twitter[order(unigram.df.twitter$Freq,decreasing = T),]
+
+ggplot(head(unigram.df.twitter,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="blue") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Unigrams frequency\nTwitter") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(unigram.df.twitter)` unique words on this sample.
+* `r nrow(unigram.df.twitter %>% filter(Freq == 1))` words occurs only one time.
+
+How many words we need to cover 50% of the instances?
+```{r twitter_fifty,cache=TRUE}
+cumsum.twitter <- cumsum(unigram.df.twitter$Freq)
+limit.50.twitter <- sum(unigram.df.twitter$Freq)*0.5
+length((cumsum.twitter[cumsum.twitter <=  limit.50.twitter]))
+```
+
+How many word to cover 90% of the instances?
+```{r twitter_ninety, cache=TRUE}
+limit.90.twitter <- sum(unigram.df.twitter$Freq)*0.9
+length((cumsum.twitter[cumsum.twitter <=  limit.90.twitter]))
+```
+
+#### News
+```{r news_unigram,cache=TRUE}
+unigram.termdocmatrix.news <- TermDocumentMatrix(corpus.news, control = list(tokenize = UnigramTokenizer))
+unigram.df.news <- data.frame(Term = unigram.termdocmatrix.news$dimnames$Terms, 
+                                 Freq = unigram.termdocmatrix.news$v) 
+unigram.df.news <- unigram.df.news[order(unigram.df.news$Freq,decreasing = T),] 
+
+ggplot(head(unigram.df.news,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="purple") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Unigrams frequency\nNews") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(unigram.df.news)` unique words on this sample.
+* `r nrow(unigram.df.news %>% filter(Freq == 1))` words occurs only one time.
+
+How many words we need to cover 50% of the instances?
+```{r news_fifty,cache=TRUE}
+cumsum.news <- cumsum(unigram.df.news$Freq)
+limit.50.news <- sum(unigram.df.news$Freq)*0.5
+length((cumsum.news[cumsum.news <=  limit.50.news]))
+```
+
+How many word to cover 90% of the instances?
+```{r news_ninety, cache=TRUE}
+limit.90.news <- sum(unigram.df.news$Freq)*0.9
+length((cumsum.news[cumsum.news <=  limit.90.news]))
+```
+
+### Bigram analysis
+
+The report conducts bigrams analysis for the samples.
+
+#### Blogs
+
+Top ten words:
+```{r blogs_bigrams,cache=TRUE}
+BigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+bigram.termdocmatrix.blogs <- TermDocumentMatrix(corpus.blogs, control = list(tokenize = BigramTokenizer))
+
+bigram.df.blogs <- data.frame(Term = bigram.termdocmatrix.blogs$dimnames$Terms, 
+                                 Freq = bigram.termdocmatrix.blogs$v) 
+bigram.df.blogs <- bigram.df.blogs[order(bigram.df.blogs$Freq,decreasing = T),] 
+
+ggplot(head(bigram.df.blogs,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="cyan") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Bigrams frequency\nBlogs") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(bigram.df.blogs)` unique bigrams on this sample.
+* `r nrow(bigram.df.blogs %>% filter(Freq == 1))` bigrams occurs only one time.
+
+How many bigrams we need to cover 50% of the instances?
+```{r blogs_bigrams_fifty,cache=TRUE}
+cumsum.blogs <- cumsum(bigram.df.blogs$Freq)
+limit.50.blogs <- sum(bigram.df.blogs$Freq)*0.5
+length((cumsum.blogs[cumsum.blogs <=  limit.50.blogs]))
+```
+
+How many bigrams to cover 90% of the instances?
+```{r blogs_bigrams_ninety, cache=TRUE}
+limit.90.blogs <- sum(bigram.df.blogs$Freq)*0.9
+length((cumsum.blogs[cumsum.blogs <=  limit.90.blogs]))
+```
+
+#### Twitter
+```{r twitter_bigrams,cache=TRUE}
+bigram.termdocmatrix.twitter <- TermDocumentMatrix(corpus.twitter, control = list(tokenize = BigramTokenizer))
+
+bigram.df.twitter <- data.frame(Term = bigram.termdocmatrix.twitter$dimnames$Terms, 
+                                 Freq = bigram.termdocmatrix.twitter$v)
+bigram.df.twitter <- bigram.df.twitter[order(bigram.df.twitter$Freq,decreasing = T),]
+
+ggplot(head(bigram.df.twitter,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="blue") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Bigrams frequency\nTwitter") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(bigram.df.twitter)` unique bigrams on this sample.
+* `r nrow(bigram.df.twitter %>% filter(Freq == 1))` bigrams occurs only one time.
+
+How many bigrams we need to cover 50% of the instances?
+```{r twitter_bigrams_fifty,cache=TRUE}
+cumsum.twitter <- cumsum(bigram.df.twitter$Freq)
+limit.50.twitter <- sum(bigram.df.twitter$Freq)*0.5
+length((cumsum.twitter[cumsum.twitter <=  limit.50.twitter]))
+```
+
+How many bigrams to cover 90% of the instances?
+```{r twitter_bigrams_ninety, cache=TRUE}
+limit.90.twitter <- sum(bigram.df.twitter$Freq)*0.9
+length((cumsum.twitter[cumsum.twitter <=  limit.90.twitter]))
+```
+
+#### News
+```{r news_bigrams,cache=TRUE}
+bigram.termdocmatrix.news <- TermDocumentMatrix(corpus.news, control = list(tokenize = BigramTokenizer))
+
+bigram.df.news <- data.frame(Term = bigram.termdocmatrix.news$dimnames$Terms, 
+                                 Freq = bigram.termdocmatrix.news$v)
+bigram.df.news <- bigram.df.news[order(bigram.df.news$Freq,decreasing = T),]
+
+ggplot(head(bigram.df.news,10), aes(x=reorder(Term,-Freq), y=Freq)) +
+  geom_bar(stat="Identity", fill="purple") +
+  geom_text(aes(label=Freq), vjust = -0.5) +
+  ggtitle("Bigrams frequency\nNews") +
+  ylab("Frequency") +
+  xlab("Term")
+```
+
+* `r nrow(unigram.df.news)` unique bigrams on this sample.
+* `r nrow(unigram.df.news %>% filter(Freq == 1))` bigrams occurs only one time.
+
+How many bigrams we need to cover 50% of the instances?
+```{r news_bigrams_fifty,cache=TRUE}
+cumsum.news <- cumsum(bigram.df.news$Freq)
+limit.50.news <- sum(bigram.df.news$Freq)*0.5
+length((cumsum.news[cumsum.news <=  limit.50.news]))
+```
+
+How many bigrams to cover 90% of the instances?
+```{r news_bigrams_ninety, cache=TRUE}
+limit.90.news <- sum(bigram.df.news$Freq)*0.9
+length((cumsum.news[cumsum.news <=  limit.90.news]))
+```
+
+# Next Steps
+1. Build a prediction model: Research how to evaluate the model; Test Markov chain and Naive Bayes; Test other algorithms that can predict probability for more than one response; Use 2-gram, 3-gram, 4-gram and 5-gram to predict the next word; Use Katz's back-off model; and Research how to predict a response when a word/N-gram is never reflected in the data.
+
+2. Create shinny app: Consider the size in memory and performance (runtime) of the model; Develop the app; Publish the app in shinyapps.io and check the resources consumption; Conduct regression and user testing.
+   
+3. Create Final Report!
